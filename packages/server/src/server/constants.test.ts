@@ -1,6 +1,11 @@
 import { RequestContext } from '@mastra/core/request-context';
 import { describe, expect, it } from 'vitest';
-import { MASTRA_INHERITED_MEMORY_KEY, isReservedRequestContextKey } from './constants';
+import {
+  MASTRA_AGENT_VERSION_PINS_DELEGATED_KEY,
+  MASTRA_AGENT_VERSION_PINS_KEY,
+  MASTRA_INHERITED_MEMORY_KEY,
+  isReservedRequestContextKey,
+} from './constants';
 import { mergeBodyRequestContext } from './handlers/utils';
 
 describe('isReservedRequestContextKey', () => {
@@ -28,5 +33,11 @@ describe('isReservedRequestContextKey', () => {
 
   it('leaves ordinary keys to the caller', () => {
     expect(isReservedRequestContextKey('userId')).toBe(false);
+  });
+
+  it('reserves trusted agent-version pin state but leaves public version selectors available', () => {
+    expect(isReservedRequestContextKey(MASTRA_AGENT_VERSION_PINS_KEY)).toBe(true);
+    expect(isReservedRequestContextKey(MASTRA_AGENT_VERSION_PINS_DELEGATED_KEY)).toBe(true);
+    expect(isReservedRequestContextKey('mastra__versions')).toBe(false);
   });
 });

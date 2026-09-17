@@ -35,6 +35,7 @@ export const API_ROUTE_METADATA = {
       "agentId"
     ],
     "queryParams": [
+      "label",
       "status",
       "versionId"
     ],
@@ -70,9 +71,13 @@ export const API_ROUTE_METADATA = {
     "pathParams": [
       "agentId"
     ],
-    "queryParams": [],
+    "queryParams": [
+      "label",
+      "status",
+      "versionId"
+    ],
     "bodyParams": [],
-    "hasQuery": false,
+    "hasQuery": true,
     "hasBody": false,
     "responseShape": {
       "kind": "array"
@@ -84,7 +89,11 @@ export const API_ROUTE_METADATA = {
     "pathParams": [
       "agentId"
     ],
-    "queryParams": [],
+    "queryParams": [
+      "label",
+      "status",
+      "versionId"
+    ],
     "bodyParams": [
       "activeTools",
       "clientTools",
@@ -110,9 +119,10 @@ export const API_ROUTE_METADATA = {
       "toolsets",
       "tracingOptions",
       "untilIdle",
+      "versionContinuationToken",
       "versions"
     ],
-    "hasQuery": false,
+    "hasQuery": true,
     "hasBody": true,
     "responseShape": {
       "kind": "single"
@@ -150,6 +160,7 @@ export const API_ROUTE_METADATA = {
       "toolsets",
       "tracingOptions",
       "untilIdle",
+      "versionContinuationToken",
       "versions"
     ],
     "hasQuery": false,
@@ -245,12 +256,17 @@ export const API_ROUTE_METADATA = {
       "agentId",
       "toolId"
     ],
-    "queryParams": [],
+    "queryParams": [
+      "label",
+      "status",
+      "versionId"
+    ],
     "bodyParams": [
       "data",
-      "requestContext"
+      "requestContext",
+      "versions"
     ],
-    "hasQuery": false,
+    "hasQuery": true,
     "hasBody": true,
     "responseShape": {
       "kind": "single"
@@ -270,6 +286,7 @@ export const API_ROUTE_METADATA = {
       "requestContext",
       "resourceId",
       "resumeData",
+      "runId",
       "streamOptions",
       "threadId",
       "toolCallId"
@@ -316,7 +333,8 @@ export const API_ROUTE_METADATA = {
       "providerOptions",
       "requestContext",
       "runId",
-      "toolCallId"
+      "toolCallId",
+      "versions"
     ],
     "hasQuery": false,
     "hasBody": true,
@@ -339,7 +357,8 @@ export const API_ROUTE_METADATA = {
       "reason",
       "requestContext",
       "runId",
-      "toolCallId"
+      "toolCallId",
+      "versions"
     ],
     "hasQuery": false,
     "hasBody": true,
@@ -419,12 +438,16 @@ export const API_ROUTE_METADATA = {
     "pathParams": [
       "agentId"
     ],
-    "queryParams": [],
+    "queryParams": [
+      "label",
+      "status",
+      "versionId"
+    ],
     "bodyParams": [
       "comment",
       "instructions"
     ],
-    "hasQuery": false,
+    "hasQuery": true,
     "hasBody": true,
     "responseShape": {
       "kind": "single"
@@ -437,9 +460,13 @@ export const API_ROUTE_METADATA = {
       "agentId",
       "toolId"
     ],
-    "queryParams": [],
+    "queryParams": [
+      "label",
+      "status",
+      "versionId"
+    ],
     "bodyParams": [],
-    "hasQuery": false,
+    "hasQuery": true,
     "hasBody": false,
     "responseShape": {
       "kind": "single"
@@ -452,6 +479,7 @@ export const API_ROUTE_METADATA = {
       "agentId"
     ],
     "queryParams": [
+      "label",
       "path",
       "status",
       "versionId"
@@ -471,7 +499,10 @@ export const API_ROUTE_METADATA = {
       "skillName"
     ],
     "queryParams": [
-      "path"
+      "label",
+      "path",
+      "status",
+      "versionId"
     ],
     "bodyParams": [],
     "hasQuery": true,
@@ -486,12 +517,16 @@ export const API_ROUTE_METADATA = {
     "pathParams": [
       "agentId"
     ],
-    "queryParams": [],
+    "queryParams": [
+      "label",
+      "status",
+      "versionId"
+    ],
     "bodyParams": [
       "audio",
       "options"
     ],
-    "hasQuery": false,
+    "hasQuery": true,
     "hasBody": true,
     "responseShape": {
       "kind": "single"
@@ -503,9 +538,13 @@ export const API_ROUTE_METADATA = {
     "pathParams": [
       "agentId"
     ],
-    "queryParams": [],
+    "queryParams": [
+      "label",
+      "status",
+      "versionId"
+    ],
     "bodyParams": [],
-    "hasQuery": false,
+    "hasQuery": true,
     "hasBody": false,
     "responseShape": {
       "kind": "single"
@@ -3377,6 +3416,7 @@ export const API_ROUTE_METADATA = {
       "toolsets",
       "tracingOptions",
       "untilIdle",
+      "versionContinuationToken",
       "versions"
     ],
     "hasQuery": false,
@@ -3626,6 +3666,60 @@ export const API_ROUTE_METADATA = {
       "kind": "single"
     }
   },
+  "GET /stored/agents/:agentId/labels": {
+    "method": "GET",
+    "path": "/stored/agents/:agentId/labels",
+    "pathParams": [
+      "agentId"
+    ],
+    "queryParams": [
+      "page",
+      "perPage"
+    ],
+    "bodyParams": [],
+    "hasQuery": true,
+    "hasBody": false,
+    "responseShape": {
+      "kind": "object-property",
+      "listProperty": "labels",
+      "paginationProperty": "pagination"
+    }
+  },
+  "PUT /stored/agents/:agentId/labels/:label": {
+    "method": "PUT",
+    "path": "/stored/agents/:agentId/labels/:label",
+    "pathParams": [
+      "agentId",
+      "label"
+    ],
+    "queryParams": [],
+    "bodyParams": [
+      "expectedRevisionToken",
+      "versionId"
+    ],
+    "hasQuery": false,
+    "hasBody": true,
+    "responseShape": {
+      "kind": "single"
+    }
+  },
+  "DELETE /stored/agents/:agentId/labels/:label": {
+    "method": "DELETE",
+    "path": "/stored/agents/:agentId/labels/:label",
+    "pathParams": [
+      "agentId",
+      "label"
+    ],
+    "queryParams": [
+      "expectedRevisionToken"
+    ],
+    "bodyParams": [],
+    "hasQuery": true,
+    "hasBody": false,
+    "responseShape": {
+      "kind": "single"
+    }
+  },
   "GET /stored/agents/:storedAgentId": {
     "method": "GET",
     "path": "/stored/agents/:storedAgentId",
@@ -3633,7 +3727,9 @@ export const API_ROUTE_METADATA = {
       "storedAgentId"
     ],
     "queryParams": [
-      "status"
+      "label",
+      "status",
+      "versionId"
     ],
     "bodyParams": [],
     "hasQuery": true,
@@ -3810,9 +3906,11 @@ export const API_ROUTE_METADATA = {
       "versionId"
     ],
     "queryParams": [],
-    "bodyParams": [],
+    "bodyParams": [
+      "expectedActiveVersionId"
+    ],
     "hasQuery": false,
-    "hasBody": false,
+    "hasBody": true,
     "responseShape": {
       "kind": "single"
     }
@@ -6579,7 +6677,8 @@ export const API_ROUTE_METADATA = {
     "bodyParams": [
       "files",
       "message",
-      "requestContext"
+      "requestContext",
+      "versions"
     ],
     "hasQuery": true,
     "hasBody": true,
@@ -6599,7 +6698,8 @@ export const API_ROUTE_METADATA = {
     ],
     "bodyParams": [
       "message",
-      "requestContext"
+      "requestContext",
+      "versions"
     ],
     "hasQuery": true,
     "hasBody": true,
@@ -6619,7 +6719,8 @@ export const API_ROUTE_METADATA = {
     ],
     "bodyParams": [
       "message",
-      "requestContext"
+      "requestContext",
+      "versions"
     ],
     "hasQuery": true,
     "hasBody": true,
@@ -6765,7 +6866,8 @@ export const API_ROUTE_METADATA = {
       "priority",
       "source",
       "sourceId",
-      "summary"
+      "summary",
+      "versions"
     ],
     "hasQuery": true,
     "hasBody": true,
