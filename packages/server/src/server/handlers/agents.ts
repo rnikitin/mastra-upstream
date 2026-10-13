@@ -114,14 +114,25 @@ import {
  * Merge incoming version overrides onto a RequestContext.
  * Reads any existing overrides, shallow-merges per category, and writes back.
  */
-export function stashVersionOverrides(ctx: RequestContext, versions: VersionOverrides | undefined): void {
-  if (!versions) return;
+export function stashVersionOverrides(
+  ctx: RequestContext,
+  versions: VersionOverrides | undefined,
+  agent?: Agent,
+): void {
+  const resolvedVersionId = agent?.toRawConfig()?.resolvedVersionId;
+  if (!versions && !agent) return;
+  versions ??= {};
   const existingRaw = ctx.get(MASTRA_VERSIONS_KEY);
   const existing =
     existingRaw && typeof existingRaw === 'object' && !Array.isArray(existingRaw)
       ? (existingRaw as VersionOverrides)
       : undefined;
-  const merged = mergeVersionOverrides(existing, versions);
+  const merged = mergeVersionOverrides(
+    existing,
+    typeof resolvedVersionId === 'string' && agent && versions.agents?.[agent.id]
+      ? { ...versions, agents: { ...versions?.agents, [agent.id]: { versionId: resolvedVersionId } } }
+      : versions,
+  );
   if (merged) {
     ctx.set(MASTRA_VERSIONS_KEY, merged);
   }
@@ -132,6 +143,24 @@ type VersionSelectorInput = {
   label?: unknown;
   status?: unknown;
 };
+
+/** Keep caller overrides above agent defaults without evaluating dynamic defaults twice. */
+export function freezeCallerVersionOverrides(
+  agent: Agent,
+  versions?: VersionOverrides,
+  rootSelector?: VersionSelector,
+): VersionOverrides | undefined {
+  const selector = rootSelector ?? versions?.agents?.[agent.id];
+  if (!selector) return versions;
+  const resolvedVersionId = agent.toRawConfig()?.resolvedVersionId;
+  return {
+    ...versions,
+    agents: {
+      ...versions?.agents,
+      [agent.id]: typeof resolvedVersionId === 'string' ? { versionId: resolvedVersionId } : selector,
+    },
+  };
+}
 
 function invalidVersionSelector(message: string, details?: Record<string, unknown>): never {
   throw createVersionLabelApiError('INVALID_VERSION_SELECTOR', message, details);
@@ -206,14 +235,12 @@ function parseLegacyVersionId(value: unknown, source: string): VersionSelector |
 /** Resolve query, body, and legacy selector sources, accepting only identical duplicates. */
 export function resolveExecutionVersionSelector({
   query,
-  bodySelf,
   bodyRootAgent,
   rootAgentId,
   requestContext,
   bodyRequestContext,
 }: {
   query?: VersionSelectorInput;
-  bodySelf?: VersionSelectorInput;
   bodyRootAgent?: VersionSelectorInput;
   rootAgentId?: string;
   requestContext?: RequestContext;
@@ -223,10 +250,6 @@ export function resolveExecutionVersionSelector({
   const candidates = [
     { source: 'query', selector: parseVersionSelector(query, { source: 'query' }) },
     {
-      source: 'versions.self',
-      selector: parseVersionSelector(bodySelf, { required: bodySelf !== undefined, source: 'versions.self' }),
-    },
-    {
       source: rootAgentId ? `versions.agents.${rootAgentId}` : 'versions.agents',
       selector: parseVersionSelector(bodyRootAgent, {
         required: bodyRootAgent !== undefined,
@@ -234,14 +257,10 @@ export function resolveExecutionVersionSelector({
       }),
     },
     {
-      source: 'requestContext.mastra__versions.self',
-      selector: contextVersionOverrides?.self,
-    },
-    {
       source: rootAgentId
         ? `requestContext.mastra__versions.agents.${rootAgentId}`
         : 'requestContext.mastra__versions.agents',
-      selector: rootAgentId ? contextVersionOverrides?.agents?.[rootAgentId] : undefined,
+      selector: rootAgentId && bodyRootAgent === undefined ? contextVersionOverrides?.agents?.[rootAgentId] : undefined,
     },
     {
       source: 'requestContext.agentVersionId',
@@ -276,10 +295,10 @@ export function normalizeVersionOverrides(
 ): VersionOverrides | undefined {
   if (!versions) return undefined;
 
-  const self = parseVersionSelector(versions.self, {
-    required: versions.self !== undefined,
-    source: `${source}.self`,
-  });
+  if ('self' in versions) invalidVersionSelector('Use versions.agents[agentId] instead of versions.self', { source });
+  if (versions.defaultLabel !== undefined) {
+    parseVersionSelector({ label: versions.defaultLabel }, { required: true, source: `${source}.defaultLabel` });
+  }
   const normalizedAgents = versions.agents
     ? Object.fromEntries(
         Object.entries(versions.agents).map(([agentId, selector]) => [
@@ -298,7 +317,7 @@ export function normalizeVersionOverrides(
   }
 
   const normalized = {
-    ...(self ? { self } : {}),
+    ...(versions.defaultLabel !== undefined ? { defaultLabel: versions.defaultLabel } : {}),
     ...(agents ? { agents } : {}),
     ...(versions.defaultStatus ? { defaultStatus: versions.defaultStatus } : {}),
   };
@@ -328,20 +347,6 @@ export function replaceVersionOverrides(ctx: RequestContext, versions: VersionOv
   }
 }
 
-function omitRootVersionSelector(versions: VersionOverrides | undefined): VersionOverrides | undefined {
-  if (!versions) return undefined;
-
-  const { self: _rootSelector, ...delegatedVersions } = versions;
-  const agents =
-    delegatedVersions.agents && Object.keys(delegatedVersions.agents).length > 0 ? delegatedVersions.agents : undefined;
-  return agents || delegatedVersions.defaultStatus
-    ? {
-        ...(agents ? { agents } : {}),
-        ...(delegatedVersions.defaultStatus ? { defaultStatus: delegatedVersions.defaultStatus } : {}),
-      }
-    : undefined;
-}
-
 function omitAgentVersionSelector(
   versions: VersionOverrides | undefined,
   agentId: string,
@@ -359,12 +364,14 @@ function omitAgentVersionSelector(
 }
 
 export function resolveExecutionVersioning({
+  mastra,
   agentId,
   versions,
   requestContext,
   bodyRequestContext,
   query,
 }: {
+  mastra?: Context['mastra'];
   agentId: string;
   versions?: VersionOverrides;
   requestContext?: RequestContext;
@@ -373,27 +380,29 @@ export function resolveExecutionVersioning({
 }): { versionOptions: VersionSelector | undefined; delegatedVersions: VersionOverrides | undefined } {
   const normalizedVersions = normalizeVersionOverrides(versions);
   const contextVersions = normalizeRequestContextVersionOverrides(requestContext);
-  const versionOptions = resolveExecutionVersionSelector({
+  const explicitRoot = resolveExecutionVersionSelector({
     query,
-    bodySelf: normalizedVersions?.self,
     bodyRootAgent: normalizedVersions?.agents?.[agentId],
     rootAgentId: agentId,
     requestContext,
     bodyRequestContext,
   });
 
-  if (requestContext) {
-    replaceVersionOverrides(
-      requestContext,
-      omitRootVersionSelector(omitAgentVersionSelector(contextVersions, agentId)),
-    );
-  }
-
-  // `versions.self` is consumed at this HTTP root boundary. Only dependency
-  // selectors and the default status may flow into delegated executions.
+  const merged = normalizeVersionOverrides(
+    mergeVersionOverrides(mergeVersionOverrides(mastra?.getVersionOverrides(), contextVersions), normalizedVersions),
+  );
+  const versionOptions =
+    explicitRoot ??
+    merged?.agents?.[agentId] ??
+    (merged?.defaultLabel !== undefined
+      ? { label: merged.defaultLabel }
+      : merged?.defaultStatus
+        ? { status: merged.defaultStatus }
+        : undefined);
+  // Root entries remain part of the graph policy, including cycles back to the root.
   return {
     versionOptions,
-    delegatedVersions: omitRootVersionSelector(omitAgentVersionSelector(normalizedVersions, agentId)),
+    delegatedVersions: explicitRoot ? { ...merged, agents: { ...merged?.agents, [agentId]: explicitRoot } } : merged,
   };
 }
 
@@ -415,6 +424,7 @@ type RootlessVersionContinuationEntry = {
   schemaVersion: 1;
   agentId: string;
   versions: VersionOverrides;
+  pins?: Record<string, unknown>;
   expiresAt: number;
 };
 
@@ -462,12 +472,21 @@ function normalizeRootlessVersionContinuationEntry(
   } catch {
     return rootlessContinuationIntegrityError(expectedAgentId, 'the cached version policy is invalid');
   }
-  if (!versions || versions.self || versions.agents?.[expectedAgentId]) {
-    return rootlessContinuationIntegrityError(expectedAgentId, 'the cached continuation does not describe a base root');
-  }
+  versions ??= {};
+  if (versions.defaultLabel !== undefined)
+    return rootlessContinuationIntegrityError(expectedAgentId, 'the cached policy contains a mutable label');
   for (const selector of Object.values(versions.agents ?? {})) {
     if (!('versionId' in selector)) {
       return rootlessContinuationIntegrityError(expectedAgentId, 'a cached dependency is not pinned by versionId');
+    }
+  }
+  if (input.pins !== undefined) {
+    const pinnedVersions = getResolvedVersionOverrides(
+      { get: () => input.pins } as unknown as RequestContext,
+      expectedAgentId,
+    );
+    if (!pinnedVersions || !exactVersionPoliciesEqual(versions, pinnedVersions)) {
+      return rootlessContinuationIntegrityError(expectedAgentId, 'the cached pins disagree with the version policy');
     }
   }
 
@@ -475,6 +494,9 @@ function normalizeRootlessVersionContinuationEntry(
     schemaVersion: 1,
     agentId: expectedAgentId,
     versions,
+    ...(input.pins && typeof input.pins === 'object' && !Array.isArray(input.pins)
+      ? { pins: input.pins as Record<string, unknown> }
+      : {}),
     expiresAt: input.expiresAt,
   };
 }
@@ -494,12 +516,14 @@ async function storeRootlessVersionContinuation(
   mastra: Context['mastra'],
   agentId: string,
   versions: VersionOverrides,
+  pins?: Record<string, unknown>,
 ): Promise<string> {
   const token = crypto.randomUUID();
   const entry: RootlessVersionContinuationEntry = {
     schemaVersion: 1,
     agentId,
-    versions,
+    versions: structuredClone(versions),
+    ...(pins ? { pins: structuredClone(pins) } : {}),
     expiresAt: Date.now() + ROOTLESS_VERSION_CONTINUATION_TTL_MS,
   };
   const serverCache = mastra.getServerCache();
@@ -581,10 +605,10 @@ function assertRootlessContinuationAssertions({
   source: string;
 }): void {
   if (!requested) return;
-  if (requested.self || requested.agents?.[agentId]) {
+  if (requested.defaultLabel !== undefined) {
     throw createVersionLabelApiError(
       'PINNED_VERSION_CONFLICT',
-      'The recursive execution root does not match the persisted unversioned root.',
+      'Recursive executions cannot replace pinned versions with a default label.',
       { agentId, source },
     );
   }
@@ -646,6 +670,7 @@ async function resolveAgentExecutionVersioning({
       ? undefined
       : normalizeVersionOverrides(bodyContextValue as VersionOverrides, 'body.requestContext.mastra__versions');
   const resolved = resolveExecutionVersioning({
+    mastra: versionContinuationToken ? undefined : mastra,
     agentId,
     versions,
     requestContext,
@@ -655,7 +680,17 @@ async function resolveAgentExecutionVersioning({
   if (!versionContinuationToken) return { ...resolved, rootUnversioned: false };
 
   const continuation = await loadRootlessVersionContinuation(mastra, agentId, versionContinuationToken);
-  if (resolved.versionOptions) {
+  const requestedRoot = resolveExecutionVersionSelector({
+    query,
+    bodyRootAgent: versions?.agents?.[agentId],
+    rootAgentId: agentId,
+    requestContext,
+    bodyRequestContext,
+  });
+  if (
+    requestedRoot &&
+    (!('versionId' in requestedRoot) || requestedRoot.versionId !== continuation.versions.agents?.[agentId]?.versionId)
+  ) {
     throw createVersionLabelApiError(
       'PINNED_VERSION_CONFLICT',
       'The recursive execution root does not match the persisted unversioned root.',
@@ -680,8 +715,15 @@ async function resolveAgentExecutionVersioning({
     pinned: continuation.versions,
     source: 'body.requestContext.mastra__versions',
   });
-  if (requestContext) replaceVersionOverrides(requestContext, continuation.versions);
-  return { versionOptions: undefined, delegatedVersions: continuation.versions, rootUnversioned: true };
+  if (requestContext) {
+    replaceVersionOverrides(requestContext, continuation.versions);
+    if (continuation.pins) {
+      requestContext.set(AGENT_VERSION_PINS_CONTEXT_KEY, continuation.pins);
+      requestContext.set('mastra__agentVersionPinsDelegated', true);
+    }
+  }
+  const rootSelector = continuation.versions.agents?.[agentId];
+  return { versionOptions: rootSelector, delegatedVersions: continuation.versions, rootUnversioned: !rootSelector };
 }
 
 /**
@@ -715,10 +757,13 @@ function getResolvedVersionOverrides(
     if (record.agentId !== expectedAgentId || typeof record.versionId !== 'string' || record.versionId.length === 0) {
       return invalidPins(`the selection for agent "${expectedAgentId}" is invalid`);
     }
+    if (record.selectedLabel !== undefined && (typeof record.selectedLabel !== 'string' || !record.selectedLabel)) {
+      return invalidPins(`the selected label for agent "${expectedAgentId}" is invalid`);
+    }
     return { versionId: record.versionId };
   };
 
-  const self = pins.root === undefined ? undefined : parseSelection(pins.root, rootAgentId);
+  const root = pins.root === undefined ? undefined : parseSelection(pins.root, rootAgentId);
   let agents: Record<string, { versionId: string }> | undefined;
   if (pins.agents !== undefined) {
     if (!pins.agents || typeof pins.agents !== 'object' || Array.isArray(pins.agents)) {
@@ -727,23 +772,43 @@ function getResolvedVersionOverrides(
     agents = {};
     for (const [agentId, selection] of Object.entries(pins.agents as Record<string, unknown>)) {
       if (agentId === rootAgentId) {
-        return invalidPins('the root agent is also present in the dependency pin map');
+        const duplicate = parseSelection(selection, agentId);
+        const rootRecord = pins.root as { selectedLabel?: string } | undefined;
+        const duplicateRecord = selection as { selectedLabel?: string };
+        if (
+          !root ||
+          root.versionId !== duplicate.versionId ||
+          (rootRecord?.selectedLabel &&
+            duplicateRecord.selectedLabel &&
+            rootRecord.selectedLabel !== duplicateRecord.selectedLabel)
+        ) {
+          return invalidPins('the root agent conflicts with the dependency pin map');
+        }
+        continue;
       }
       agents[agentId] = parseSelection(selection, agentId);
     }
   }
 
   const defaultStatus = pins.defaultStatus;
+  const resolvedAgentIds = parseResolvedAgentIds(pins.resolvedAgentIds);
+  if (
+    resolvedAgentIds &&
+    (!resolvedAgentIds.includes(rootAgentId) || Object.keys(agents ?? {}).some(id => !resolvedAgentIds.includes(id)))
+  ) {
+    return invalidPins('a pinned agent is missing from the resolved graph');
+  }
   if (defaultStatus !== undefined && defaultStatus !== 'draft' && defaultStatus !== 'published') {
     return invalidPins('the defaultStatus is invalid');
   }
-  if (!self && (!agents || Object.keys(agents).length === 0) && defaultStatus === undefined) {
+  if (!root && (!agents || Object.keys(agents).length === 0) && defaultStatus === undefined && !resolvedAgentIds) {
     return invalidPins('the pin payload contains no selections');
   }
 
   return {
-    ...(self ? { self } : {}),
-    ...(agents && Object.keys(agents).length > 0 ? { agents } : {}),
+    ...(root || (agents && Object.keys(agents).length > 0)
+      ? { agents: { ...agents, ...(root ? { [rootAgentId]: root } : {}) } }
+      : {}),
     ...(defaultStatus === 'draft' || defaultStatus === 'published' ? { defaultStatus } : {}),
   };
 }
@@ -756,10 +821,9 @@ async function getResolvedVersionOverridesMetadata(
 ): Promise<ResolvedVersionOverridesMetadata | undefined> {
   const resolvedVersionOverrides = getResolvedVersionOverrides(requestContext, rootAgentId);
   if (!resolvedVersionOverrides) return undefined;
-  if (resolvedVersionOverrides.self) {
-    if (versionContinuationToken) {
-      return rootlessContinuationIntegrityError(rootAgentId, 'a base-root continuation acquired a stored root');
-    }
+  const runtimePins = requestContext.get(AGENT_VERSION_PINS_CONTEXT_KEY) as Record<string, unknown> | undefined;
+  const hasRoot = !!resolvedVersionOverrides.agents?.[rootAgentId];
+  if (hasRoot && !runtimePins?.resolvedAgentIds && !versionContinuationToken) {
     return resolvedVersionOverrides;
   }
 
@@ -769,12 +833,18 @@ async function getResolvedVersionOverridesMetadata(
     if (!exactVersionPoliciesEqual(continuation.versions, resolvedVersionOverrides)) {
       return rootlessContinuationIntegrityError(rootAgentId, 'the recursive run changed its frozen version policy');
     }
+    if (
+      JSON.stringify(parseResolvedAgentIds(continuation.pins?.resolvedAgentIds)) !==
+      JSON.stringify(parseResolvedAgentIds(runtimePins?.resolvedAgentIds))
+    ) {
+      return rootlessContinuationIntegrityError(rootAgentId, 'the recursive run changed its frozen graph');
+    }
   } else {
-    token = await storeRootlessVersionContinuation(mastra, rootAgentId, resolvedVersionOverrides);
+    token = await storeRootlessVersionContinuation(mastra, rootAgentId, resolvedVersionOverrides, runtimePins);
   }
   return {
     ...resolvedVersionOverrides,
-    rootUnversioned: true,
+    ...(!hasRoot ? { rootUnversioned: true as const } : {}),
     versionContinuationToken: token,
   };
 }
@@ -863,6 +933,7 @@ type PersistedAgentVersionState = {
   rootVersionId?: string;
   agentVersionIds: Record<string, string>;
   defaultStatus?: 'draft' | 'published';
+  resolvedAgentIds?: string[];
   hasStructuredPins: boolean;
 };
 
@@ -878,13 +949,21 @@ function getPinnedAgentVersionState(
   const legacyRootPins = new Set<string>();
   const dependencyPins = new Map<string, Set<string>>();
   const defaultStatuses = new Set<'draft' | 'published'>();
+  const resolvedGraphs = new Map<string, string[]>();
   let hasStructuredPins = false;
   const addStructuredPins = (value: unknown): void => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return;
     const pinsRecord = value as Record<string, unknown>;
-    if (pinsRecord.root !== undefined || pinsRecord.agents !== undefined || pinsRecord.defaultStatus !== undefined) {
+    if (
+      pinsRecord.root !== undefined ||
+      pinsRecord.agents !== undefined ||
+      pinsRecord.defaultStatus !== undefined ||
+      pinsRecord.resolvedAgentIds !== undefined
+    ) {
       hasStructuredPins = true;
     }
+    const resolvedAgentIds = parseResolvedAgentIds(pinsRecord.resolvedAgentIds);
+    if (resolvedAgentIds) resolvedGraphs.set(JSON.stringify(resolvedAgentIds), resolvedAgentIds);
     if (pinsRecord.defaultStatus === 'draft' || pinsRecord.defaultStatus === 'published') {
       defaultStatuses.add(pinsRecord.defaultStatus);
     }
@@ -981,10 +1060,40 @@ function getPinnedAgentVersionState(
       { agentId, defaultStatuses: [...defaultStatuses].sort() },
     );
   }
+  if (resolvedGraphs.size > 1) {
+    throw createVersionLabelApiError(
+      'VERSION_LABEL_INTEGRITY_ERROR',
+      'The persisted agent run contains conflicting resolved graphs.',
+      { agentId },
+    );
+  }
+  const rootVersionId = rootPins.values().next().value as string | undefined;
+  if (agentVersionIds[agentId]) {
+    if (rootVersionId !== agentVersionIds[agentId]) {
+      throw createVersionLabelApiError(
+        'VERSION_LABEL_INTEGRITY_ERROR',
+        'The persisted root and dependency version pins disagree.',
+        { agentId },
+      );
+    }
+    delete agentVersionIds[agentId];
+  }
+  const resolvedAgentIds = resolvedGraphs.values().next().value;
+  if (
+    resolvedAgentIds &&
+    (!resolvedAgentIds.includes(agentId) || Object.keys(agentVersionIds).some(id => !resolvedAgentIds.includes(id)))
+  ) {
+    throw createVersionLabelApiError(
+      'VERSION_LABEL_INTEGRITY_ERROR',
+      'The persisted run contains pins outside its resolved graph.',
+      { agentId },
+    );
+  }
   return {
-    rootVersionId: rootPins.values().next().value as string | undefined,
+    rootVersionId,
     agentVersionIds,
     defaultStatus: defaultStatuses.values().next().value,
+    resolvedAgentIds,
     hasStructuredPins,
   };
 }
@@ -1000,6 +1109,9 @@ export function getPinnedAgentVersionId(workflowRun: AgentWorkflowRun | null | u
 
 function assertImmutableContinuationOverrides(versions: VersionOverrides | undefined): void {
   if (!versions) return;
+  if (versions.defaultLabel !== undefined) {
+    throw createVersionLabelApiError('PINNED_VERSION_CONFLICT', 'Continuations cannot select a mutable default label.');
+  }
   for (const [dependencyAgentId, selector] of Object.entries(versions.agents ?? {})) {
     if (!('versionId' in selector)) {
       invalidVersionSelector('Continuation dependency selectors must use an immutable versionId', {
@@ -1043,7 +1155,6 @@ export async function resolveContinuationVersioning({
   const normalizedVersions = normalizeVersionOverrides(versions);
   const contextVersions = normalizeRequestContextVersionOverrides(requestContext);
   const requested = resolveExecutionVersionSelector({
-    bodySelf: normalizedVersions?.self,
     bodyRootAgent: normalizedVersions?.agents?.[agentId],
     rootAgentId: agentId,
     requestContext,
@@ -1051,7 +1162,7 @@ export async function resolveContinuationVersioning({
   });
   if (requested && !('versionId' in requested)) {
     invalidVersionSelector('Continuation root selectors must use an immutable versionId', {
-      source: 'versions.self',
+      source: `versions.agents.${agentId}`,
     });
   }
   const normalizedDelegatedVersions = omitAgentVersionSelector(normalizedVersions, agentId);
@@ -1118,7 +1229,9 @@ export async function resolveContinuationVersioning({
 
   const persistedDependencyPins = new Map<string, Set<string>>();
   const persistedDefaultStatuses = new Set<'draft' | 'published'>();
+  const persistedGraphs = new Map<string, string[]>();
   for (const { state } of versionStates) {
+    if (state.resolvedAgentIds) persistedGraphs.set(JSON.stringify(state.resolvedAgentIds), state.resolvedAgentIds);
     if (state.defaultStatus) persistedDefaultStatuses.add(state.defaultStatus);
     for (const [dependencyAgentId, versionId] of Object.entries(state.agentVersionIds)) {
       const versionIds = persistedDependencyPins.get(dependencyAgentId) ?? new Set<string>();
@@ -1143,6 +1256,14 @@ export async function resolveContinuationVersioning({
     );
   }
   const pinnedDefaultStatus = persistedDefaultStatuses.values().next().value;
+  if (persistedGraphs.size > 1) {
+    throw createVersionLabelApiError(
+      'VERSION_LABEL_INTEGRITY_ERROR',
+      'The persisted agent run contains conflicting resolved graphs.',
+      { agentId, runId },
+    );
+  }
+  const resolvedAgentIds = persistedGraphs.values().next().value;
   const requestedDefaultStatuses = [
     normalizedDelegatedVersions?.defaultStatus,
     contextDelegatedVersions?.defaultStatus,
@@ -1224,7 +1345,7 @@ export async function resolveContinuationVersioning({
           ...(pinnedDefaultStatus ? { defaultStatus: pinnedDefaultStatus } : {}),
         }
       : undefined
-    : omitRootVersionSelector(mergeVersionOverrides(contextDelegatedVersions, normalizedDelegatedVersions));
+    : mergeVersionOverrides(contextDelegatedVersions, normalizedDelegatedVersions);
   const persistedVersionPins = hasStructuredPins
     ? {
         ...(pinnedVersionId ? { root: { agentId, versionId: pinnedVersionId } } : {}),
@@ -1239,6 +1360,7 @@ export async function resolveContinuationVersioning({
             }
           : {}),
         ...(pinnedDefaultStatus ? { defaultStatus: pinnedDefaultStatus } : {}),
+        ...(resolvedAgentIds ? { resolvedAgentIds } : {}),
       }
     : undefined;
 
@@ -1255,23 +1377,13 @@ export async function resolveContinuationVersioning({
   };
 }
 
-/**
- * Ensure `defaultStatus` is set on the version overrides in the RequestContext
- * so sub-agents inherit the same draft/published semantics as the parent.
- *
- * When the parent agent is resolved via a specific versionId (editor context),
- * sub-agents should default to `draft`. When resolved with published (main
- * chat), sub-agents default to `published`. An explicit `defaultStatus` from
- * the request body takes precedence.
- */
-export function ensureDefaultVersionStatus(ctx: RequestContext, versionOptions: VersionSelector | undefined): void {
-  const existingRaw = ctx.get(MASTRA_VERSIONS_KEY) as VersionOverrides | undefined;
-  // Don't overwrite an explicit defaultStatus from the body
-  if (existingRaw?.defaultStatus) return;
-
-  const inferredStatus: 'draft' | 'published' = versionOptions && 'versionId' in versionOptions ? 'draft' : 'published';
-  const updated: VersionOverrides = { ...existingRaw, defaultStatus: inferredStatus };
-  ctx.set(MASTRA_VERSIONS_KEY, updated);
+/** Preserve the private run-start graph across serialized continuation boundaries. */
+export function parseResolvedAgentIds(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0 || !value.every(id => typeof id === 'string' && id.length > 0)) {
+    throw createVersionLabelApiError('VERSION_LABEL_INTEGRITY_ERROR', 'The persisted resolved agent graph is invalid.');
+  }
+  return [...new Set(value)].sort();
 }
 
 function getIsStudioFromContext(requestContext: RequestContext): boolean {
@@ -2226,7 +2338,6 @@ export async function getAgentForContinuation({
   requestContext,
   bodyRequestContext,
   workflowNames,
-  synthesizeLegacyDefaultStatus = true,
   deferUnpinnedAssertionsToExternalHistory = false,
   durableToolCall,
 }: {
@@ -2237,8 +2348,6 @@ export async function getAgentForContinuation({
   requestContext?: RequestContext;
   bodyRequestContext?: Record<string, unknown>;
   workflowNames?: readonly string[];
-  /** Disable only when another authoritative continuation store will validate the source run. */
-  synthesizeLegacyDefaultStatus?: boolean;
   /** Preserve exact assertions for validation by an authoritative external run-history store. */
   deferUnpinnedAssertionsToExternalHistory?: boolean;
   /** Wait for a durable suspension before reading its immutable version pins. */
@@ -2293,11 +2402,6 @@ export async function getAgentForContinuation({
     replaceVersionOverrides(requestContext, delegatedVersions);
     if (persistedVersionPins) {
       requestContext.set(AGENT_VERSION_PINS_CONTEXT_KEY, persistedVersionPins);
-    }
-    // Preserve the legacy code-agent continuation default. Stored continuations
-    // with an exact root pin must not infer a new mutable status.
-    if (!versionOptions && !hasStructuredPins && synthesizeLegacyDefaultStatus) {
-      ensureDefaultVersionStatus(requestContext, undefined);
     }
   }
   return { agent, workflowRun };
@@ -2806,10 +2910,7 @@ export const GENERATE_AGENT_ROUTE = createRoute({
         replaceVersionOverrides(serverRequestContext, delegatedVersions);
       } else {
         // Stash version overrides from body onto requestContext for sub-agent resolution
-        stashVersionOverrides(serverRequestContext, delegatedVersions);
-
-        // Propagate draft/published default to sub-agents
-        ensureDefaultVersionStatus(serverRequestContext, versionOptions);
+        stashVersionOverrides(serverRequestContext, delegatedVersions, agent);
       }
 
       // Authorization: apply context overrides to memory option if present
@@ -2851,6 +2952,12 @@ export const GENERATE_AGENT_ROUTE = createRoute({
 
       const options = {
         ...restOptions,
+        versions: freezeCallerVersionOverrides(
+          agent,
+          versions,
+          parseVersionSelector({ versionId, label, status }) ??
+            extractVersionOptions(serverRequestContext, bodyRequestContext as Record<string, unknown> | undefined),
+        ),
         // Schema validates context permissively; runtime values are ModelMessages.
         context: restOptions.context as AIV5Type.ModelMessage[] | undefined,
         requestContext: serverRequestContext,
@@ -2911,8 +3018,7 @@ export const GENERATE_LEGACY_ROUTE = createRoute({
       });
       if (rootUnversioned) replaceVersionOverrides(requestContext, delegatedVersions);
       else {
-        stashVersionOverrides(requestContext, delegatedVersions);
-        ensureDefaultVersionStatus(requestContext, versionOptions);
+        stashVersionOverrides(requestContext, delegatedVersions, agent);
       }
 
       // Use resourceId if provided, fall back to resourceid (deprecated)
@@ -2948,6 +3054,9 @@ export const GENERATE_LEGACY_ROUTE = createRoute({
 
       const result = await agent.generateLegacy(messages, {
         ...rest,
+        ...(versions || extractVersionOptions(requestContext)
+          ? { versions: freezeCallerVersionOverrides(agent, versions, extractVersionOptions(requestContext)) }
+          : {}),
         abortSignal,
         requestContext,
         resourceId: effectiveResourceId ?? '',
@@ -2996,8 +3105,7 @@ export const STREAM_GENERATE_LEGACY_ROUTE = createRoute({
       });
       if (rootUnversioned) replaceVersionOverrides(requestContext, delegatedVersions);
       else {
-        stashVersionOverrides(requestContext, delegatedVersions);
-        ensureDefaultVersionStatus(requestContext, versionOptions);
+        stashVersionOverrides(requestContext, delegatedVersions, agent);
       }
 
       // Use resourceId if provided, fall back to resourceid (deprecated)
@@ -3033,6 +3141,9 @@ export const STREAM_GENERATE_LEGACY_ROUTE = createRoute({
 
       const streamResult = await agent.streamLegacy(messages, {
         ...rest,
+        ...(versions || extractVersionOptions(requestContext)
+          ? { versions: freezeCallerVersionOverrides(agent, versions, extractVersionOptions(requestContext)) }
+          : {}),
         abortSignal,
         requestContext,
         resourceId: effectiveResourceId ?? '',
@@ -3263,10 +3374,7 @@ export const STREAM_GENERATE_ROUTE = createRoute({
         replaceVersionOverrides(serverRequestContext, delegatedVersions);
       } else {
         // Stash version overrides from body onto requestContext for sub-agent resolution
-        stashVersionOverrides(serverRequestContext, delegatedVersions);
-
-        // Propagate draft/published default to sub-agents
-        ensureDefaultVersionStatus(serverRequestContext, versionOptions);
+        stashVersionOverrides(serverRequestContext, delegatedVersions, agent);
       }
 
       // Authorization: apply context overrides to memory option if present
@@ -3308,6 +3416,11 @@ export const STREAM_GENERATE_ROUTE = createRoute({
 
       const options: Record<string, any> = {
         ...restOptions,
+        versions: freezeCallerVersionOverrides(
+          agent,
+          versions,
+          extractVersionOptions(serverRequestContext, bodyRequestContext as Record<string, unknown> | undefined),
+        ),
         requestContext: serverRequestContext,
         memory: authorizedMemoryOption,
         abortSignal,
@@ -3424,6 +3537,7 @@ export const SEND_AGENT_SIGNAL_ROUTE: ServerRoute<
         }));
       } else {
         const executionVersioning = resolveExecutionVersioning({
+          mastra,
           agentId,
           versions: idleStreamOptions?.versions,
           requestContext: serverRequestContext,
@@ -3436,8 +3550,7 @@ export const SEND_AGENT_SIGNAL_ROUTE: ServerRoute<
           versionOptions: executionVersioning.versionOptions,
           requestContext: serverRequestContext,
         });
-        stashVersionOverrides(serverRequestContext, delegatedVersions);
-        ensureDefaultVersionStatus(serverRequestContext, executionVersioning.versionOptions);
+        stashVersionOverrides(serverRequestContext, delegatedVersions, agent);
       }
       const effectiveResourceId = getEffectiveResourceId(serverRequestContext, resourceId);
       const effectiveThreadId = getEffectiveThreadId(serverRequestContext, threadId);
@@ -3446,6 +3559,11 @@ export const SEND_AGENT_SIGNAL_ROUTE: ServerRoute<
           ...(ifIdle ?? {}),
           streamOptions: {
             ...forwardedIdleStreamOptions,
+            versions: freezeCallerVersionOverrides(
+              agent,
+              idleStreamOptions?.versions,
+              extractVersionOptions(serverRequestContext, bodyRequestContext),
+            ),
             ...(delegatedVersions ? { versions: delegatedVersions } : {}),
             requestContext: serverRequestContext,
           } as any,
@@ -3549,6 +3667,7 @@ async function handleAgentMessageRoute({
     }));
   } else {
     const executionVersioning = resolveExecutionVersioning({
+      mastra,
       agentId,
       versions: idleStreamOptions?.versions,
       requestContext: serverRequestContext,
@@ -3561,8 +3680,7 @@ async function handleAgentMessageRoute({
       versionOptions: executionVersioning.versionOptions,
       requestContext: serverRequestContext,
     });
-    stashVersionOverrides(serverRequestContext, delegatedVersions);
-    ensureDefaultVersionStatus(serverRequestContext, executionVersioning.versionOptions);
+    stashVersionOverrides(serverRequestContext, delegatedVersions, agent);
   }
   const effectiveResourceId = getEffectiveResourceId(serverRequestContext, resourceId);
   const effectiveThreadId = getEffectiveThreadId(serverRequestContext, threadId);
@@ -3571,6 +3689,11 @@ async function handleAgentMessageRoute({
       ...(ifIdle ?? {}),
       streamOptions: {
         ...forwardedIdleStreamOptions,
+        versions: freezeCallerVersionOverrides(
+          agent,
+          idleStreamOptions?.versions,
+          extractVersionOptions(serverRequestContext, bodyRequestContext),
+        ),
         ...(delegatedVersions ? { versions: delegatedVersions } : {}),
         requestContext: serverRequestContext,
       } as any,
@@ -3956,8 +4079,7 @@ export const STREAM_UNTIL_IDLE_GENERATE_ROUTE = createRoute({
       if (rootUnversioned) {
         replaceVersionOverrides(serverRequestContext, delegatedVersions);
       } else {
-        stashVersionOverrides(serverRequestContext, delegatedVersions);
-        ensureDefaultVersionStatus(serverRequestContext, versionOptions);
+        stashVersionOverrides(serverRequestContext, delegatedVersions, agent);
       }
 
       // Authorization: apply context overrides to memory option if present
@@ -3990,6 +4112,11 @@ export const STREAM_UNTIL_IDLE_GENERATE_ROUTE = createRoute({
 
       const options = {
         ...restOptions,
+        versions: freezeCallerVersionOverrides(
+          agent,
+          versions,
+          extractVersionOptions(serverRequestContext, bodyRequestContext as Record<string, unknown> | undefined),
+        ),
         // Schema validates context permissively; runtime values are ModelMessages.
         context: restOptions.context as AIV5Type.ModelMessage[] | undefined,
         requestContext: serverRequestContext,
@@ -4266,7 +4393,6 @@ export const SEND_TOOL_APPROVAL_ROUTE = createRoute({
           versions: streamVersions,
           requestContext: serverRequestContext,
           bodyRequestContext,
-          synthesizeLegacyDefaultStatus: !continuesWithMessages,
           deferUnpinnedAssertionsToExternalHistory: !!continuesWithMessages,
         });
         agent = continuation.agent;
@@ -4876,15 +5002,19 @@ export const STREAM_NETWORK_ROUTE = createRoute({
       stripClientCredentialHeaders(params);
 
       const { versions, memory, ...rest } = params;
-      const { versionOptions, delegatedVersions } = resolveExecutionVersioning({ agentId, versions, requestContext });
+      const { versionOptions, delegatedVersions } = resolveExecutionVersioning({
+        mastra,
+        agentId,
+        versions,
+        requestContext,
+      });
       const agent = await getAgentFromSystem({
         mastra,
         agentId,
         versionOptions,
         requestContext,
       });
-      stashVersionOverrides(requestContext, delegatedVersions);
-      ensureDefaultVersionStatus(requestContext, versionOptions);
+      stashVersionOverrides(requestContext, delegatedVersions, agent);
       const resolvedVersionId = agent.toRawConfig()?.resolvedVersionId;
       if (typeof resolvedVersionId === 'string' && resolvedVersionId.length > 0) {
         requestContext.set(AGENT_VERSION_PINS_CONTEXT_KEY, {
@@ -4910,6 +5040,7 @@ export const STREAM_NETWORK_ROUTE = createRoute({
 
       const streamResult = await agent.network(messages, {
         ...rest,
+        versions: freezeCallerVersionOverrides(agent, versions),
         requestContext,
         memory: authorizedMemoryOption,
       });

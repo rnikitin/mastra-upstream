@@ -1054,9 +1054,8 @@ describe('Agent Routes Authorization', () => {
       expect(result).toEqual({
         text: 'ok',
         resolvedVersionOverrides: {
-          self: { versionId: 'root-v1' },
-          agents: { dependency: { versionId: 'dependency-v1' } },
           defaultStatus: 'draft',
+          agents: { dependency: { versionId: 'dependency-v1' }, 'test-agent': { versionId: 'root-v1' } },
         },
       });
     });
@@ -1084,9 +1083,8 @@ describe('Agent Routes Authorization', () => {
         abortSignal: new AbortController().signal,
         messages: [{ role: 'user', content: 'test' }],
         versions: {
-          self: { label: 'stable' },
-          agents: { dependency: { versionId: 'dependency-v1' } },
           defaultStatus: 'published',
+          agents: { dependency: { versionId: 'dependency-v1' }, 'test-agent': { label: 'stable' } },
         },
       } as any);
 
@@ -1094,9 +1092,8 @@ describe('Agent Routes Authorization', () => {
       expect(result).toEqual({
         text: 'legacy-ok',
         resolvedVersionOverrides: {
-          self: { versionId: 'root-v1' },
-          agents: { dependency: { versionId: 'dependency-v1' } },
           defaultStatus: 'published',
+          agents: { dependency: { versionId: 'dependency-v1' }, 'test-agent': { versionId: 'root-v1' } },
         },
       });
     });
@@ -1243,7 +1240,7 @@ describe('Agent Routes Authorization', () => {
       expect(capturedOptions).not.toHaveProperty('actor');
     });
 
-    it('rejects disagreeing canonical and root-agent selectors before hydration', async () => {
+    it('rejects disagreeing query and root-agent selectors before hydration', async () => {
       let error: HTTPException | undefined;
       try {
         await GENERATE_AGENT_ROUTE.handler({
@@ -1252,8 +1249,8 @@ describe('Agent Routes Authorization', () => {
           requestContext: new RequestContext(),
           abortSignal: new AbortController().signal,
           messages: [{ role: 'user', content: 'test' }],
+          versionId: 'version-1',
           versions: {
-            self: { versionId: 'version-1' },
             agents: { 'test-agent': { versionId: 'version-2' } },
           },
         } as any);
@@ -1267,12 +1264,12 @@ describe('Agent Routes Authorization', () => {
         error: {
           code: 'INVALID_VERSION_SELECTOR',
           message: 'Version selector sources disagree',
-          details: { sources: ['versions.self', 'versions.agents.test-agent'] },
+          details: { sources: ['query', 'versions.agents.test-agent'] },
         },
       });
     });
 
-    it('accepts identical root sources and consumes the root agent-map entry', async () => {
+    it('accepts identical root sources and retains the root agent-map entry', async () => {
       const requestContext = new RequestContext();
       requestContext.set(MASTRA_VERSIONS_KEY, {
         agents: {
@@ -1296,7 +1293,6 @@ describe('Agent Routes Authorization', () => {
         versionId: 'version-1',
         messages: [{ role: 'user', content: 'test' }],
         versions: {
-          self: { versionId: 'version-1' },
           agents: {
             'test-agent': { versionId: 'version-1' },
             dependency: { versionId: 'dependency-v1' },
@@ -1307,10 +1303,10 @@ describe('Agent Routes Authorization', () => {
       expect(applyStoredOverrides).toHaveBeenCalledWith(mockAgent, { versionId: 'version-1' }, requestContext);
       expect(executionContext?.get(MASTRA_VERSIONS_KEY)).toEqual({
         agents: {
+          'test-agent': { versionId: 'version-1' },
           'context-dependency': { versionId: 'context-dependency-v1' },
           dependency: { versionId: 'dependency-v1' },
         },
-        defaultStatus: 'draft',
       });
     });
 
@@ -1457,10 +1453,7 @@ describe('Agent Routes Authorization', () => {
         requestContext,
         abortSignal: new AbortController().signal,
         messages: [{ role: 'user', content: 'test' }],
-        versions: {
-          self: { label: 'stable' },
-          agents: { dependency: { label: 'canary' } },
-        },
+        versions: { agents: { dependency: { label: 'canary' }, 'test-agent': { label: 'stable' } } },
       } as any);
       const reader = stream.getReader();
       const chunks: unknown[] = [];
@@ -1475,9 +1468,8 @@ describe('Agent Routes Authorization', () => {
         {
           type: RESOLVED_VERSION_OVERRIDES_CHUNK_TYPE,
           payload: {
-            self: { versionId: 'root-v1' },
-            agents: { dependency: { versionId: 'dependency-v1' } },
             defaultStatus: 'draft',
+            agents: { dependency: { versionId: 'dependency-v1' }, 'test-agent': { versionId: 'root-v1' } },
           },
         },
         finishChunk,
@@ -1777,9 +1769,8 @@ describe('Agent Routes Authorization', () => {
         abortSignal: new AbortController().signal,
         messages: [{ role: 'user', content: 'test' }],
         versions: {
-          self: { label: 'stable' },
-          agents: { dependency: { label: 'canary' } },
           defaultStatus: 'published',
+          agents: { dependency: { label: 'canary' }, 'test-agent': { label: 'stable' } },
         },
       } as any);
 
@@ -1787,9 +1778,8 @@ describe('Agent Routes Authorization', () => {
       const encodedOverrides = response.headers.get(RESOLVED_VERSION_OVERRIDES_HEADER);
       expect(encodedOverrides).toBeTruthy();
       expect(JSON.parse(decodeURIComponent(encodedOverrides!))).toEqual({
-        self: { versionId: 'root-v1' },
-        agents: { dependency: { versionId: 'dependency-v1' } },
         defaultStatus: 'published',
+        agents: { dependency: { versionId: 'dependency-v1' }, 'test-agent': { versionId: 'root-v1' } },
       });
       expect(toDataStreamResponse).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -4200,7 +4190,6 @@ describe('Agent Routes Authorization', () => {
         agents: {
           'sub-agent': { versionId: 'version-1' },
         },
-        defaultStatus: 'published',
       });
     });
 
