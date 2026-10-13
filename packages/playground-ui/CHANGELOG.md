@@ -1,5 +1,85 @@
 # @mastra/playground-ui
 
+## 63.0.0-alpha.3
+
+### Minor Changes
+
+- Added `variant="inset"` to `Table` from `@mastra/playground-ui/components/Table`. It gives a native table the same raised look as `DataList`, with rows that grow with their content and cells that can hold any component. Existing default and small tables render exactly as before. ([#26625](https://github.com/mastra-ai/mastra/pull/26625))
+
+  The inset variant comes with composable parts:
+
+  - `Table.RowLink` and `Table.RowButton` make a whole row a link or a button, and other controls in the row keep their own clicks.
+  - `Table.SortButton` turns a header into a sort control with a direction arrow.
+  - `Table.Pagination` adds numbered pages below the table; the page and rows stay in your code.
+  - `columnDividers` draws lines between columns.
+
+  ```tsx
+  import { Table } from '@mastra/playground-ui/components/Table';
+
+  <Table variant="inset" aria-label="Credit history">
+    <Table.Header>
+      <Table.Row>
+        <Table.Head>Type</Table.Head>
+        <Table.Head align="end">Balance</Table.Head>
+      </Table.Row>
+    </Table.Header>
+    <Table.Body>
+      <Table.Row>
+        <Table.Cell>
+          <Table.RowLink href="/credits/1">Credit grant</Table.RowLink>
+        </Table.Cell>
+        <Table.Cell align="end">$6.95</Table.Cell>
+      </Table.Row>
+    </Table.Body>
+  </Table>;
+  ```
+
+- Added `Pagination` at `@mastra/playground-ui/components/Pagination`: page navigation built from parts (`Pagination`, `PaginationContent`, `PaginationItem`, `PaginationLink`, `PaginationPrevious`, `PaginationNext`, `PaginationEllipsis`), plus `getPaginationRange` for choosing which page numbers to show. The current page slides between pages, and links can render as anchors or router links. ([#26625](https://github.com/mastra-ai/mastra/pull/26625))
+
+  ```tsx
+  import {
+    Pagination,
+    PaginationContent,
+    PaginationItem,
+    PaginationLink,
+  } from '@mastra/playground-ui/components/Pagination';
+
+  <Pagination>
+    <PaginationContent>
+      <PaginationItem>
+        <PaginationLink isActive>1</PaginationLink>
+      </PaginationItem>
+      <PaginationItem>
+        <PaginationLink onClick={() => setPage(1)}>2</PaginationLink>
+      </PaginationItem>
+    </PaginationContent>
+  </Pagination>;
+  ```
+
+- Added an `inline` variant to `DataPanel` that renders the panel in the normal page flow instead of a modal side drawer. Use it to embed detail views directly in a layout (no backdrop, focus trap, or dismissal). The parent controls mounting and size. ([#26867](https://github.com/mastra-ai/mastra/pull/26867))
+
+  ```tsx
+  <DataPanel variant="inline" title="Span details">
+    <DataPanel.Header>
+      <DataPanel.Heading>Span details</DataPanel.Heading>
+    </DataPanel.Header>
+    <DataPanel.Content>…</DataPanel.Content>
+  </DataPanel>
+  ```
+
+### Patch Changes
+
+- Improved the main content layout on narrow screens. Where the sidebar collapses into the mobile header, the content is now flat and runs edge to edge under the header instead of sitting in an inset, rounded card. Wider screens with the sidebar beside the content are unchanged. ([#26858](https://github.com/mastra-ai/mastra/pull/26858))
+
+- Fixed DataPanel headers on narrow screens. Header actions now wrap onto a second row instead of being pushed out of view, so every action, including the close button, stays reachable. ([#26868](https://github.com/mastra-ai/mastra/pull/26868))
+
+- Trace Intelligence now labels its list by Agent instead of Entity. Agents whose traces are still being analyzed show an "Analyzing" status and can no longer be clicked, since they have no signals to open yet. Hovering or focusing the status shows how many traces have been collected. ([#26812](https://github.com/mastra-ai/mastra/pull/26812))
+
+- Updated dependencies [[`54e9dc3`](https://github.com/mastra-ai/mastra/commit/54e9dc3ed0615ee84a6526395a9fefe17320fe7e), [`3b6a49e`](https://github.com/mastra-ai/mastra/commit/3b6a49ea9e8de3b6bec3cf5145892ef7a47395ad)]:
+  - @mastra/core@1.77.0-alpha.3
+  - @mastra/react@1.10.0-alpha.3
+  - @mastra/client-js@1.54.0-alpha.3
+
 ## 63.0.0-alpha.2
 
 ### Minor Changes

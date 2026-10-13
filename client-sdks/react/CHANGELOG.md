@@ -1,5 +1,33 @@
 # @mastra/react
 
+## 1.10.0-alpha.3
+
+### Minor Changes
+
+- Added `useExperimentsItemUsage`, which returns the token usage and estimated cost of one or more experiments, keyed by experiment ID. Each experiment comes with its totals (`summary`) and the usage of every item, keyed by trace ID (`traces`). It sends one request per experiment, so it does not need the experiment results first, and keeps polling experiments that are still running. ([#26853](https://github.com/mastra-ai/mastra/pull/26853))
+
+  ```ts
+  const { data, isLoading } = useExperimentsItemUsage({
+    experiments: [
+      { id: 'exp-1', status: 'completed' },
+      { id: 'exp-2', status: 'running' },
+    ],
+    supportsMetrics: true,
+  });
+
+  const total = data['exp-1']?.summary;
+  const item = data['exp-1']?.traces[result.traceId];
+  // both: { inputTokens, outputTokens, estimatedCost, costUnit }
+  ```
+
+  `estimatedCost` and `costUnit` are `undefined` when no price is known or when cost units are mixed.
+
+### Patch Changes
+
+- Updated dependencies [[`54e9dc3`](https://github.com/mastra-ai/mastra/commit/54e9dc3ed0615ee84a6526395a9fefe17320fe7e)]:
+  - @mastra/core@1.77.0-alpha.3
+  - @mastra/client-js@1.54.0-alpha.3
+
 ## 1.10.0-alpha.2
 
 ### Patch Changes

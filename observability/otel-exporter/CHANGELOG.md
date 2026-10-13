@@ -1,5 +1,14 @@
 # @mastra/otel-exporter
 
+## 1.4.7-alpha.1
+
+### Patch Changes
+
+- Fixed `OtelExporter.flush()` so it waits for spans that are still being sent before it returns. Serverless code that flushes and then exits no longer loses those spans. Arize and Arthur exporters get the same fix. ([#26757](https://github.com/mastra-ai/mastra/pull/26757))
+
+- Updated dependencies [[`54e9dc3`](https://github.com/mastra-ai/mastra/commit/54e9dc3ed0615ee84a6526395a9fefe17320fe7e)]:
+  - @mastra/core@1.77.0-alpha.3
+
 ## 1.4.7-alpha.0
 
 ### Patch Changes

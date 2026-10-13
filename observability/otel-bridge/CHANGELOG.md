@@ -1,5 +1,13 @@
 # @mastra/otel-bridge
 
+## 1.5.16-alpha.1
+
+### Patch Changes
+
+- Updated dependencies [[`54e9dc3`](https://github.com/mastra-ai/mastra/commit/54e9dc3ed0615ee84a6526395a9fefe17320fe7e), [`26431e6`](https://github.com/mastra-ai/mastra/commit/26431e661a76733a0caec66fd8241ae0852d3f25)]:
+  - @mastra/core@1.77.0-alpha.3
+  - @mastra/otel-exporter@1.4.7-alpha.1
+
 ## 1.5.16-alpha.0
 
 ### Patch Changes

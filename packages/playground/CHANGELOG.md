@@ -1,5 +1,21 @@
 # @internal/playground
 
+## 1.34.1-alpha.3
+
+### Patch Changes
+
+- Reworked the experiments comparison page. Each item's input and ground truth are now shown by default as cards, and long content is clipped with a fade and an "Expand" button. Outputs use the same cards, and agent outputs show their text as markdown. Experiment columns are wider, and the table fades at its edges when it scrolls horizontally. ([#26791](https://github.com/mastra-ai/mastra/pull/26791))
+
+  Each experiment column now opens with a summary of the run: agent, creation date, errors, average score, average duration and per-scorer averages. Each item shows its duration and scores. Contenders show how each value moved against the baseline, and lower durations and error counts count as improvements.
+
+  Click a column's star badge to make that experiment the baseline. The breadcrumb now reads "Comparing N experiments". Hover it to see the compared experiments by name, with the baseline tagged.
+
+- Updated dependencies [[`54e9dc3`](https://github.com/mastra-ai/mastra/commit/54e9dc3ed0615ee84a6526395a9fefe17320fe7e), [`6d21904`](https://github.com/mastra-ai/mastra/commit/6d2190435b7085cac848b2e257055eb5f199ea23), [`46f61dd`](https://github.com/mastra-ai/mastra/commit/46f61ddd119a00c56b8987089b15950156ba9727), [`3b6a49e`](https://github.com/mastra-ai/mastra/commit/3b6a49ea9e8de3b6bec3cf5145892ef7a47395ad), [`88475e9`](https://github.com/mastra-ai/mastra/commit/88475e93520365f5950c8de12c82987885723095), [`88475e9`](https://github.com/mastra-ai/mastra/commit/88475e93520365f5950c8de12c82987885723095), [`489dc10`](https://github.com/mastra-ai/mastra/commit/489dc1023d921748de2e1ec964d0dba3c8de5d4a), [`15453ff`](https://github.com/mastra-ai/mastra/commit/15453ff9fd446567bc0483ec27ddc752196d510a)]:
+  - @mastra/core@1.77.0-alpha.3
+  - @mastra/playground-ui@63.0.0-alpha.3
+  - @mastra/react@1.10.0-alpha.3
+  - @mastra/client-js@1.54.0-alpha.3
+
 ## 1.34.1-alpha.2
 
 ### Patch Changes
