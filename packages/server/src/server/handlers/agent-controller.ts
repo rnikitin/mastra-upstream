@@ -22,6 +22,7 @@ import { agentVersionOverridesSchema } from '../schemas/agents';
 import { filterSchema, includeSchema, messageOrderBySchema } from '../schemas/memory';
 import { createRoute } from '../server-adapter/routes/route-builder';
 import {
+  freezeCallerVersionOverrides,
   getAgentFromSystem,
   normalizeRequestContextVersionOverrides,
   normalizeVersionOverrides,
@@ -126,7 +127,7 @@ type ControllerVersionOverrides = Parameters<typeof normalizeVersionOverrides>[0
 
 /**
  * Resolve a controller's current mode agent before an acknowledged background
- * turn starts, then pass only the immutable root id into the Session. This
+ * turn starts, then pass caller selectors as per-call Session options. This
  * closes the label-move race between the HTTP response and `sendMessage`'s
  * asynchronous stream setup while preserving dependency overrides.
  */
@@ -144,9 +145,9 @@ async function prepareControllerExecutionContext({
   versions?: ControllerVersionOverrides;
   requestContext?: RequestContext;
   rejectSelectorsWhileActive?: boolean;
-}): Promise<RequestContext> {
+}): Promise<{ requestContext: RequestContext; versions?: ControllerVersionOverrides }> {
   const executionContext = requestContext ?? new RequestContext();
-  const normalized = normalizeVersionOverrides(versions);
+  const normalized = normalizeVersionOverrides(versions === undefined ? undefined : structuredClone(versions));
   const contextVersions = normalizeRequestContextVersionOverrides(executionContext);
   const currentAgent = controller.getCurrentAgent(session);
 
@@ -161,7 +162,7 @@ async function prepareControllerExecutionContext({
         { controllerId: controller.id, agentId: currentAgent.id },
       );
     }
-    return executionContext;
+    return { requestContext: executionContext };
   }
 
   const { versionOptions: explicitRoot, delegatedVersions } = resolveExecutionVersioning({
@@ -191,7 +192,11 @@ async function prepareControllerExecutionContext({
   }
 
   stashVersionOverrides(executionContext, executionVersions, resolvedAgent);
-  return executionContext;
+  const callerVersions = freezeCallerVersionOverrides(resolvedAgent, normalized);
+  return {
+    requestContext: executionContext,
+    ...(callerVersions !== undefined && { versions: callerVersions }),
+  };
 }
 
 function handleControllerRouteError(error: unknown, fallbackMessage: string): never {
@@ -759,7 +764,7 @@ export const SEND_AGENT_CONTROLLER_MESSAGE_ROUTE = createRoute({
     try {
       const controller = getAgentControllerOrThrow(mastra, controllerId);
       const session = await getSession(controller, resourceId, { scope: sessionScope }, requestContext);
-      const executionContext = await prepareControllerExecutionContext({
+      const executionOptions = await prepareControllerExecutionContext({
         mastra,
         controller,
         session,
@@ -771,7 +776,7 @@ export const SEND_AGENT_CONTROLLER_MESSAGE_ROUTE = createRoute({
       // `server.middleware` reaches dynamic instructions and tools (same as the
       // plain agent message route).
       ackBackgroundSessionWork({
-        work: session.sendMessage({ content: message, files, requestContext: executionContext }),
+        work: session.sendMessage({ content: message, files, ...executionOptions }),
         session,
         mastra,
         operation: 'sendMessage',
@@ -931,7 +936,7 @@ export const STEER_AGENT_CONTROLLER_SESSION_ROUTE = createRoute({
     try {
       const controller = getAgentControllerOrThrow(mastra, controllerId);
       const session = await getSession(controller, resourceId, { scope: sessionScope }, requestContext);
-      const executionContext = await prepareControllerExecutionContext({
+      const executionOptions = await prepareControllerExecutionContext({
         mastra,
         controller,
         session,
@@ -939,7 +944,7 @@ export const STEER_AGENT_CONTROLLER_SESSION_ROUTE = createRoute({
         requestContext,
       });
       ackBackgroundSessionWork({
-        work: session.steer({ content: message, requestContext: executionContext }),
+        work: session.steer({ content: message, ...executionOptions }),
         session,
         mastra,
         operation: 'steer',
@@ -1280,7 +1285,7 @@ export const SEND_AGENT_CONTROLLER_NOTIFICATION_ROUTE = createRoute({
     try {
       const controller = getAgentControllerOrThrow(mastra, controllerId);
       const session = await getSession(controller, resourceId, { scope: sessionScope }, requestContext);
-      const executionContext = await prepareControllerExecutionContext({
+      const executionOptions = await prepareControllerExecutionContext({
         mastra,
         controller,
         session,
@@ -1301,7 +1306,7 @@ export const SEND_AGENT_CONTROLLER_NOTIFICATION_ROUTE = createRoute({
           attributes: attributes as Record<string, string | number | boolean | null | undefined> | undefined,
           metadata,
         },
-        { requestContext: executionContext },
+        executionOptions,
       );
       return {
         accepted: result.accepted !== undefined,
@@ -1545,7 +1550,7 @@ export const FOLLOW_UP_AGENT_CONTROLLER_SESSION_ROUTE = createRoute({
     try {
       const controller = getAgentControllerOrThrow(mastra, controllerId);
       const session = await getSession(controller, resourceId, { scope: sessionScope }, requestContext);
-      const executionContext = await prepareControllerExecutionContext({
+      const executionOptions = await prepareControllerExecutionContext({
         mastra,
         controller,
         session,
@@ -1553,7 +1558,7 @@ export const FOLLOW_UP_AGENT_CONTROLLER_SESSION_ROUTE = createRoute({
         requestContext,
       });
       ackBackgroundSessionWork({
-        work: session.followUp({ content: message, requestContext: executionContext }),
+        work: session.followUp({ content: message, ...executionOptions }),
         session,
         mastra,
         operation: 'followUp',
