@@ -15,6 +15,7 @@ import type { MastraModelConfig } from '../llm/model/shared.types';
 import { AGENTIC_EXECUTION_WORKFLOW_ID, AGENTIC_LOOP_WORKFLOW_ID } from '../loop/loop-builder';
 import { Mastra } from '../mastra';
 import { createRunScopeKey } from '../mastra/run-scope';
+import type { VersionOverrides } from '../mastra/types';
 import { TITLE_PINNED_THREAD_METADATA_KEY } from '../memory';
 import type { MastraMemory } from '../memory/memory';
 import type { StorageThreadType } from '../memory/types';
@@ -2090,6 +2091,7 @@ export class AgentController<TState = {}> {
   private async buildAgentMessageStreamOptions({
     session,
     requestContext: requestContextInput,
+    versions,
     tracingContext,
     tracingOptions,
     untilIdle,
@@ -2098,6 +2100,7 @@ export class AgentController<TState = {}> {
   }: {
     session: Session<TState>;
     requestContext?: RequestContext;
+    versions?: VersionOverrides;
     tracingContext?: TracingContext;
     tracingOptions?: TracingOptions;
     untilIdle?: boolean | { maxIdleMs?: number };
@@ -2150,6 +2153,7 @@ export class AgentController<TState = {}> {
 
     const streamOptions: Record<string, unknown> = {
       ...this.buildSharedRunOptions(session, requestContext),
+      ...(versions !== undefined && { versions }),
       memory: {
         thread: runThreadId,
         resource: resourceId,
