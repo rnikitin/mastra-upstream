@@ -1743,8 +1743,9 @@ export class SessionRunEngine {
           : 'complete';
     // A follower Session mirrors suspensions from runs it does not own. Once
     // such a run completes (it was resumed elsewhere), its parked calls were
-    // answered, so drop them without a cancellation event. Error and tripwire
-    // finishes retract in their chunk handlers; lease loss keeps them parked.
+    // answered, so drop them without a cancellation event. An abort elsewhere
+    // cancelled them, so retract them as abortRun() does. Error and tripwire
+    // finishes retract where the error is seen; lease loss keeps them parked.
     const runId = this.#session.run.getRunId();
     if (reason === 'complete' && resourceId && threadId && runId) {
       for (const s of this.#session.suspensions.deleteForRun({ resourceId, threadId, runId })) {
@@ -1755,6 +1756,8 @@ export class SessionRunEngine {
           toolCallId: s.toolCallId,
         });
       }
+    } else if (reason === 'aborted') {
+      this.retractFailedRunSuspensions({ resourceId, threadId, runId, reason: ABORTED_BY_USER_REASON });
     }
     await this.#session.finishAgentRun(reason);
     this.#session.run.reset();
@@ -1881,6 +1884,12 @@ export class SessionRunEngine {
                 type: 'error',
                 error: new Error(currentRun.terminalError),
                 finishReason: currentRun.terminalFinishReason,
+              });
+              this.retractFailedRunSuspensions({
+                resourceId: currentRun.resourceId,
+                threadId: currentRun.threadId,
+                runId: this.#session.run.getRunId(),
+                reason: currentRun.terminalError,
               });
             }
             await this.finishSubscribedStreamRun({
